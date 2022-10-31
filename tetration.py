@@ -41,8 +41,10 @@ def updateQuery(query,value,key):
     if query.get('field')==key:
         query["value"]=value
     if query.get('filters',''):
+        filter_object=[]
         for i,queryObj in enumerate(query["filters"]):
-            query[i]=updateQuery(queryObj,value,key)
+            filter_object.append(updateQuery(queryObj,value,key))
+        query["filters"]=filter_object
     return query
 
 class Tetration():
