@@ -1,0 +1,2 @@
+tetpyclient
+python-dotenv

@@ -1,0 +1,1 @@
+Folder for placing configuations with respect to the script (if any)
