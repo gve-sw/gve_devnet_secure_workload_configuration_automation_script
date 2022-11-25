@@ -261,16 +261,13 @@ class Tetration():
             data = json.load(app)
             total_apps = len(data)
             for count,app_config in enumerate(data):
-                # req_payload = {
-                #     "id": app_config["id"],
-                #     "app_scope_id": app_config["app_scope_id"],
-                #     "name": app_config["name"],
-                #     "description": app_config["description"],
-                #     "primary": app_config["primary"]
-                # }
+                # Application Data
                 with open(os.path.join(filepath,os.getenv('BACKUP_APPLICATION_FILE')+'s',app_config["id"]+'.json')) as json_file:
                     json_data=json_file.read()
                 req_payload=json.loads(json_data)
+                # Policy Data
+                with open(os.path.join(filepath,os.getenv('BACKUP_POLICIES_FILE'),app_config["id"]+'.json')) as policy_json:
+                    policy_data=json.load(policy_json)
 
                 if vrf:
                     if req_payload["vrf"]["id"]==vrf["id"]:
@@ -283,8 +280,8 @@ class Tetration():
                         req_payload["vrf"]=vrf_data
 
                         # Removing
-                        elements_to_keep=["app_scope_id","name","description","alternate_query_mode","strict_validation","primary","inventory_filters","absolute_policies","default_policies","catch_all_action"]
-                        #elements_to_keep=["app_scope_id","name","description","alternate_query_mode","strict_validation","primary","catch_all_action"]
+                        elements_to_keep=["app_scope_id","name","description","alternate_query_mode","strict_validation","primary","catch_all_action","inventory_filters"]
+                        #elements_to_keep=["app_scope_id","name","description","alternate_query_mode","strict_validation","primary","catch_all_action","inventory_filters","absolute_policies","default_policies"]
                         new_req_payload={}
                         for k,v in req_payload.items():
                             if k in elements_to_keep:
@@ -301,63 +298,114 @@ class Tetration():
                         new_ifilters=[]
                         ifilters_elements_to_keep=["id","name","query"]
                         for ifilter in req_payload["inventory_filters"]:
+                            filterpath=""
+                            if ifilter["filter_type"]== "AppScope":
+                                filterpath = os.path.join(filepath, os.getenv('APP_SCOPE_MAPPINGS'),
+                                                          ifilter["id"] + '.json')
+                            if ifilter["filter_type"] == "UserInventoryFilter":
+                                filterpath = os.path.join(filepath, os.getenv('INVENTORY_FILTER_MAPPINGS'),
+                                                      ifilter["id"] + '.json')
+                            filter_data={}
+
+                            if os.path.exists(filterpath):
+                                with open(filterpath) as fp:
+                                    filter_data = json.load(fp)
+                            else:
+                                # logger.info('Unable to find inventory filter for application {} with id {},{}'.format(req_payload["name"],ifilter["id"],ifilter["name"]))
+                                continue
                             filter_dict={}
-                            for x,v in ifilter.items():
+                            for x,v in filter_data.items():
                                 if x in ifilters_elements_to_keep:
-                                    if x == "query":
-                                        filter_dict[x]=updateQuery(v,new_vrf["id"],"vrf_id")
-                                    else:
-                                        filter_dict[x]=v
+                                    filter_dict[x]=v
                             new_ifilters.append(filter_dict)
                         req_payload["inventory_filters"]=new_ifilters
 
                         # Absolute Policies Processing
                         new_policies=[]
-                        policy_elements_to_keep=["consumer_filter_id","provider_filter_id","action","l4_params"]
+                        policy_elements_to_keep=["consumer_filter","provider_filter","action","l4_params"]
                         l4_params_to_keep=["proto","port","approved"]
-                        for policy in req_payload["absolute_policies"]:
+                        for policy in policy_data["absolute_policies"]:
+                            skip_policy = False
                             new_policy={}
                             for k,v in policy.items():
                                 if k in policy_elements_to_keep:
-                                    if k=="l4_params":
+                                    if k=="consumer_filter" or k=="provider_filter":
+                                        filterpath=""
+                                        if v["filter_type"]=="UserInventoryFilter":
+                                            filterpath = os.path.join(filepath, os.getenv('INVENTORY_FILTER_MAPPINGS'),
+                                                                      v["id"] + '.json')
+                                        elif v["filter_type"]=="AppScope":
+
+                                            filterpath = os.path.join(filepath, os.getenv('APP_SCOPE_MAPPINGS'),
+                                                                  v["id"] + '.json')
+                                        filter_data = {}
+                                        if os.path.exists(filterpath):
+                                            with open(filterpath) as fp:
+                                                filter_data = json.load(fp)
+                                            new_policy[k+"_id"] = filter_data["id"]
+                                        else:
+                                            if v["filter_type"] == "AppScope" and v["id"]==vrf["root_app_scope_id"]:
+                                                new_policy[k + "_id"] = new_vrf["root_app_scope_id"]
+                                            else:
+                                                skip_policy=True
+                                                break
+                                    elif k=="l4_params":
                                         new_l4_params=[]
                                         for l4 in v:
                                             new_l4={}
                                             for x,y in l4.items():
                                                 if x in l4_params_to_keep:
-                                                    new_l4[k]=v
+                                                    new_l4[x]=y
                                             new_l4_params.append(new_l4)
                                         new_policy[k]= new_l4_params
                                     else:
                                         new_policy[k]=v
-                            new_policies.append(new_policy)
+                            if not skip_policy:
+                                new_policies.append(new_policy)
                         req_payload["absolute_policies"]=new_policies
 
                         # Default Processing
                         new_policies = []
-                        policy_elements_to_keep = ["consumer_filter_id", "provider_filter_id", "action", "l4_params"]
+                        policy_elements_to_keep = ["consumer_filter", "provider_filter", "action", "l4_params"]
                         l4_params_to_keep = ["proto", "port", "approved"]
-                        for policy in req_payload["default_policies"]:
+                        for policy in policy_data["default_policies"]:
+                            skip_policy=False
                             new_policy = {}
                             for k, v in policy.items():
                                 if k in policy_elements_to_keep:
-                                    if k == "l4_params":
+                                    if k == "consumer_filter" or k == "provider_filter":
+                                        filterpath = ""
+                                        if v["filter_type"] == "UserInventoryFilter":
+                                            filterpath = os.path.join(filepath, os.getenv('INVENTORY_FILTER_MAPPINGS'),
+                                                                      v["id"] + '.json')
+                                        elif v["filter_type"] == "AppScope":
+                                            filterpath = os.path.join(filepath, os.getenv('APP_SCOPE_MAPPINGS'),
+                                                                      v["id"] + '.json')
+                                        filter_data = {}
+                                        if os.path.exists(filterpath):
+                                            with open(filterpath) as fp:
+                                                filter_data = json.load(fp)
+                                            new_policy[k + "_id"] = filter_data["id"]
+                                        else:
+                                            if v["filter_type"] == "AppScope" and v["id"] == vrf["root_app_scope_id"]:
+                                                new_policy[k + "_id"] = new_vrf["root_app_scope_id"]
+                                            else:
+                                                skip_policy = True
+                                                break
+                                    elif k == "l4_params":
                                         new_l4_params = []
                                         for l4 in v:
                                             new_l4 = {}
                                             for x, y in l4.items():
                                                 if x in l4_params_to_keep:
-                                                    new_l4[k] = v
+                                                    new_l4[x] = y
                                             new_l4_params.append(new_l4)
                                         new_policy[k] = new_l4_params
                                     else:
                                         new_policy[k] = v
-                            new_policies.append(new_policy)
+                            if not skip_policy:
+                                new_policies.append(new_policy)
                         req_payload["default_policies"] = new_policies
-
-                    else:
-                        continue
-
 
                 if req_payload:
                     logger.debug('Create Application :' + json.dumps(req_payload))
@@ -366,11 +414,13 @@ class Tetration():
                         logger.info('Restoring Application {}/{} of {}'.format(count + 1, total_apps, app_config['name']))
                         self.write_to_file(app_mapping_path,app_config["id"],resp.text)
                         logger.debug(resp.text)
+
                     else:
                         logger.error(
                             'Error Restoring Application {}/{} of {} - {},{}'.format(count + 1, total_apps, app_config['name'],resp.status_code,resp.reason))
                 else:
                     logger.info('Skip Application {}/{} of {}'.format(count + 1, total_apps, app_config['name']))
+
 
     def get_application_scope_leaf(self,filepath,filename,vrf=None,new_vrf=None):
         # If the Mapping Scope is already created
@@ -572,6 +622,8 @@ class Tetration():
 
     def create_inventory_filter(self, filepath,vrf=None,new_vrf=None):
         "Create an inventory filter"
+        inventory_filter_path= os.path.join(filepath, os.getenv("INVENTORY_FILTER_MAPPINGS"))
+        os.makedirs(inventory_filter_path, exist_ok=True)
         with open(os.path.join(filepath,os.getenv("BACKUP_INVENTORY_FILTER_FILE")+'.json')) as app:
             data = json.load(app)
             if not vrf:
@@ -585,6 +637,7 @@ class Tetration():
 
                     resp = self.restclient.post('/filters/inventories', json_body=json.dumps(req_payload),timeout=self.timeout)
                     if resp.status_code == 200:
+
                         logger.info(f'Inventory filter {inventory_filter_config["name"]} added successfully.')
             else:
                 # Getting APP Scope Id's from root scopes
@@ -619,6 +672,7 @@ class Tetration():
                         resp = self.restclient.post('/filters/inventories', json_body=json.dumps(req_payload),
                                                     timeout=self.timeout)
                         if resp.status_code == 200:
+                            self.write_to_file(inventory_filter_path, inventory_filter_config["id"], resp.text)
                             logger.info(f'Inventory filter {inventory_filter_config["name"]} added successfully.')
                         else:
                             logger.error(f'Failed to create Inventory Filter {inventory_filter_config["id"]}-{inventory_filter_config["name"]},{resp.status_code},{resp.reason} ')
@@ -638,9 +692,9 @@ class Tetration():
             with open(os.path.join(filepath, os.getenv('BACKUP_COLLECTION_FILE'),str(id) + ".json")) as collection_rule_fp:
                 collection_rule = collection_rule_fp.read()
                 req_payload = {
-                    "id": target,
+                    #"id": target,
                     # Error getting thrown on tentant_id
-                    "tenant_id": vrf_config["tenant_id"],
+                    "tenant_id": target,
                     "name": vrf_config["name"],
                     "switch_vrfs": vrf_config["switch_vrfs"],
                     "apply_monitoring_rules": collection_rule
@@ -652,7 +706,7 @@ class Tetration():
                     logger.info(f'VRF {vrf_config["name"]} added successfully.')
                 else:
                     logger.error(
-                        "VRF Creation Failed {} with Error Code {},{}".format(vrf_config["id"], resp.status_code,
+                        "VRF Creation Failed {} with Error Code {},{}".format(target, resp.status_code,
                                                                               resp.reason))
         else:
             with open(os.path.join(filepath,os.getenv("BACKUP_VRF_FILE")+'.json')) as app:
@@ -695,7 +749,7 @@ class Tetration():
                     logger.info("Found Existing VRF with ID {}".format(new_vrf_id))
                     logger.debug(vrf)
                     return vrf
-            # self.create_vrf(filepath,id=int(vrf_id),target=int(new_vrf_id))
+            #self.create_vrf(filepath,id=int(vrf_id),target=int(new_vrf_id))
 
             logger.info("VRF with ID {} Not Found".format(new_vrf_id))
         return None
@@ -714,6 +768,7 @@ class Tetration():
             for i,scope_data in enumerate(resp_data):
                 resp=self.restclient.delete("/app_scopes/{}".format(scope_data["id"]),timeout=self.timeout)
                 logger.info('Deleted Scope {}:{}-{},{}'.format(target_vrf["id"],scope_data["id"],scope_data["name"],resp.status_code))
+                logger.debug(resp.json())
 
 
     def restore(self, filepath, modules,vrf,new_vrf):
